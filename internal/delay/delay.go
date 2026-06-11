@@ -78,7 +78,8 @@ func MonteCarloSimulation(
 		simulations = defaultSimulations
 	}
 
-	rng := rand.New(rand.NewSource(now.UnixNano()))
+	seed := deterministicSeed(p, now)
+	rng := rand.New(rand.NewSource(seed))
 
 	results := make([]float64, simulations)
 	delayOver2Weeks := 0
@@ -91,7 +92,8 @@ func MonteCarloSimulation(
 	}
 
 	for i := 0; i < simulations; i++ {
-		extraDays := simulateProjectDelay(p, projectMap, now, rng, params)
+		visited := make(map[string]bool)
+		extraDays := simulateProjectDelay(p, projectMap, now, rng, params, visited)
 		results[i] = extraDays
 		totalExtra += extraDays
 		if extraDays >= 14 {
@@ -130,12 +132,18 @@ func simulateProjectDelay(
 	now time.Time,
 	rng *rand.Rand,
 	params SimulationParams,
+	visited map[string]bool,
 ) float64 {
+	if visited[p.ID] {
+		return 0.0
+	}
+	visited[p.ID] = true
+
 	totalExtra := 0.0
 
 	for _, depID := range p.Dependencies {
 		if dep, ok := projectMap[depID]; ok {
-			depDelay := simulateProjectDelay(dep, projectMap, now, rng, params)
+			depDelay := simulateProjectDelay(dep, projectMap, now, rng, params, visited)
 			totalExtra += depDelay * params.DependencyFactor
 		}
 	}
@@ -192,4 +200,28 @@ func calculateDependencyImpacts(
 		}
 	}
 	return impacts
+}
+
+func deterministicSeed(p models.Project, now time.Time) int64 {
+	h := int64(0)
+	for _, c := range p.ID {
+		h = h*31 + int64(c)
+	}
+	for _, m := range p.Milestones {
+		h = h*31 + int64(m.Number)
+		h = h*31 + int64(m.PlannedDate.Unix())
+		if m.ActualDate != nil {
+			h = h*31 + int64(m.ActualDate.Unix())
+		}
+		h = h*31 + int64(len(m.DelayRecords))
+		for _, dr := range m.DelayRecords {
+			h = h*31 + int64(dr.Days)
+		}
+	}
+	dateKey := now.Truncate(24 * time.Hour).Unix()
+	h = h*31 + dateKey
+	if h == 0 {
+		h = 1
+	}
+	return h
 }

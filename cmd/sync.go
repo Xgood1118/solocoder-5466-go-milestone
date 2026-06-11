@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"milestone-tracker/internal/milestone"
 	"milestone-tracker/internal/project"
 	"milestone-tracker/internal/scraper"
 )
@@ -13,6 +15,7 @@ import (
 var (
 	syncBaseURL       string
 	syncProjectsPath  string
+	syncDetailPath    string
 	syncCookie        string
 	syncCookieFile    string
 	syncUsername      string
@@ -47,6 +50,24 @@ var syncCmd = &cobra.Command{
 		projects, err := s.FetchProjects(syncProjectsPath)
 		if err != nil {
 			return fmt.Errorf("获取项目列表失败: %w", err)
+		}
+
+		if syncDetailPath != "" {
+			fmt.Printf("正在同步 %d 个项目的里程碑数据...\n", len(projects))
+			for i := range projects {
+				detailURL := strings.ReplaceAll(syncDetailPath, "{id}", projects[i].ID)
+				ms, err := s.FetchMilestones(detailURL)
+				if err != nil {
+					fmt.Printf("  警告: 项目 %s 里程碑抓取失败: %v\n", projects[i].ID, err)
+					continue
+				}
+				for j := range ms {
+					ms[j].ProjectID = projects[i].ID
+					ms[j].ID = milestone.NewID(projects[i].ID, ms[j].Number)
+				}
+				projects[i].Milestones = ms
+				fmt.Printf("  项目 %s: %d 个里程碑\n", projects[i].ID, len(ms))
+			}
 		}
 
 		store, err := project.NewStore(dataPath)
@@ -89,6 +110,7 @@ var syncCmd = &cobra.Command{
 func init() {
 	syncCmd.Flags().StringVar(&syncBaseURL, "url", "", "内网项目管理系统基础URL (必填)")
 	syncCmd.Flags().StringVar(&syncProjectsPath, "path", "/projects", "项目列表页面路径")
+	syncCmd.Flags().StringVar(&syncDetailPath, "detail-path", "", "项目详情页路径模板，{id}替换为项目ID，例如 /projects/{id}/milestones")
 	syncCmd.Flags().StringVar(&syncCookie, "cookie", "", "登录Cookie字符串，格式: 'sessionid=xxx; token=yyy'")
 	syncCmd.Flags().StringVar(&syncCookieFile, "cookie-file", "", "Cookie文件路径（用于持久化登录态）")
 	syncCmd.Flags().StringVar(&syncUsername, "username", "", "登录用户名")
